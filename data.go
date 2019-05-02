@@ -2,15 +2,24 @@ package scs
 
 import (
 	"bytes"
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/gob"
 	"fmt"
+	"github.com/labstack/echo/v4"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
 )
+
+// This interface matches the `Get` and `Set` found in echo.Context.
+type SessionContext interface {
+	Get(key string) interface{}
+	Set(key string, val interface{})
+	Cookie(name string) (*http.Cookie, error)
+	Response() *echo.Response
+}
 
 // Status represents the state of the session data during a request cycle.
 type Status int
@@ -37,6 +46,14 @@ type sessionData struct {
 	mu       sync.Mutex
 }
 
+func (sd *sessionData) Token() string {
+	return sd.token
+}
+
+func (sd *sessionData) SetStatus(status Status) {
+	sd.status = status
+}
+
 func newSessionData(lifetime time.Duration) *sessionData {
 	return &sessionData{
 		Deadline: time.Now().Add(lifetime).UTC(),
@@ -51,20 +68,28 @@ func newSessionData(lifetime time.Duration) *sessionData {
 //
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
-func (s *Session) Load(ctx context.Context, token string) (context.Context, error) {
-	if _, ok := ctx.Value(s.contextKey).(*sessionData); ok {
-		return ctx, nil
+func (s *Session) Load(c SessionContext, token string) (*sessionData, error) {
+	val := c.Get(string(s.contextKey))
+	if val != nil {
+		sd, ok := val.(*sessionData)
+		if ok {
+			return sd, nil
+		}
 	}
 
 	if token == "" {
-		return s.addSessionDataToContext(ctx, newSessionData(s.Lifetime)), nil
+		sd := newSessionData(s.Lifetime)
+		c.Set(string(s.contextKey), sd)
+		return sd, nil
 	}
 
 	b, found, err := s.Store.Find(token)
 	if err != nil {
 		return nil, err
 	} else if !found {
-		return s.addSessionDataToContext(ctx, newSessionData(s.Lifetime)), nil
+		sd := newSessionData(s.Lifetime)
+		c.Set(string(s.contextKey), sd)
+		return sd, nil
 	}
 
 	sd := &sessionData{
@@ -82,7 +107,8 @@ func (s *Session) Load(ctx context.Context, token string) (context.Context, erro
 		sd.status = Modified
 	}
 
-	return s.addSessionDataToContext(ctx, sd), nil
+	c.Set(string(s.contextKey), sd)
+	return sd, nil
 }
 
 // Commit saves the session data to the session store and returns the session
@@ -90,8 +116,8 @@ func (s *Session) Load(ctx context.Context, token string) (context.Context, erro
 //
 // Most applications will use the LoadAndSave() middleware and will not need to
 // use this method.
-func (s *Session) Commit(ctx context.Context) (string, time.Time, error) {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Commit(c SessionContext) (string, time.Time, error) {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -128,8 +154,8 @@ func (s *Session) Commit(ctx context.Context) (string, time.Time, error) {
 // Destroy deletes the session data from the session store and sets the session
 // status to Destroyed. Any futher operations in the same request cycle will
 // result in a new session being created.
-func (s *Session) Destroy(ctx context.Context) error {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Destroy(c SessionContext) error {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -154,8 +180,8 @@ func (s *Session) Destroy(ctx context.Context) error {
 // Put adds a key and corresponding value to the session data. Any existing
 // value for the key will be replaced. The session data status will be set to
 // Modified.
-func (s *Session) Put(ctx context.Context, key string, val interface{}) {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Put(c SessionContext, key string, val interface{}) {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	sd.Values[key] = val
@@ -174,8 +200,8 @@ func (s *Session) Put(ctx context.Context, key string, val interface{}) {
 //
 // Also see the GetString(), GetInt(), GetBytes() and other helper methods which
 // wrap the type conversion for common types.
-func (s *Session) Get(ctx context.Context, key string) interface{} {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Get(c SessionContext, key string) interface{} {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -187,8 +213,8 @@ func (s *Session) Get(ctx context.Context, key string) interface{} {
 // session data and deletes the key and value from the session data. The
 // session data status will be set to Modified. The return value has the type
 // interface{} so will usually need to be type asserted before you can use it.
-func (s *Session) Pop(ctx context.Context, key string) interface{} {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Pop(c SessionContext, key string) interface{} {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -206,8 +232,8 @@ func (s *Session) Pop(ctx context.Context, key string) interface{} {
 // Remove deletes the given key and corresponding value from the session data.
 // The session data status will be set to Modified. If the key is not present
 // this operation is a no-op.
-func (s *Session) Remove(ctx context.Context, key string) {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Remove(c SessionContext, key string) {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -222,8 +248,8 @@ func (s *Session) Remove(ctx context.Context, key string) {
 }
 
 // Exists returns true if the given key is present in the session data.
-func (s *Session) Exists(ctx context.Context, key string) bool {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Exists(c SessionContext, key string) bool {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	_, exists := sd.Values[key]
@@ -235,8 +261,8 @@ func (s *Session) Exists(ctx context.Context, key string) bool {
 // Keys returns a slice of all key names present in the session data, sorted
 // alphabetically. If the data contains no data then an empty slice will be
 // returned.
-func (s *Session) Keys(ctx context.Context) []string {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Keys(c SessionContext) []string {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	keys := make([]string, len(sd.Values))
@@ -261,8 +287,8 @@ func (s *Session) Keys(ctx context.Context) []string {
 // RenewToken before making any changes to privilege levels (e.g. login and
 // logout operations). See https://github.com/OWASP/CheatSheetSeries/blob/master/cheatsheets/Session_Management_Cheat_Sheet.md#renew-the-session-id-after-any-privilege-level-change
 // for additional information.
-func (s *Session) RenewToken(ctx context.Context) error {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) RenewToken(c SessionContext) error {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -285,8 +311,8 @@ func (s *Session) RenewToken(ctx context.Context) error {
 }
 
 // Status returns the current status of the session data.
-func (s *Session) Status(ctx context.Context) Status {
-	sd := s.getSessionDataFromContext(ctx)
+func (s *Session) Status(c SessionContext) Status {
+	sd := s.getSessionDataFromContext(c)
 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -297,8 +323,8 @@ func (s *Session) Status(ctx context.Context) Status {
 // GetString returns the string value for a given key from the session data.
 // The zero value for a string ("") is returned if the key does not exist or the
 // value could not be type asserted to a string.
-func (s *Session) GetString(ctx context.Context, key string) string {
-	val := s.Get(ctx, key)
+func (s *Session) GetString(c SessionContext, key string) string {
+	val := s.Get(c, key)
 	str, ok := val.(string)
 	if !ok {
 		return ""
@@ -309,8 +335,8 @@ func (s *Session) GetString(ctx context.Context, key string) string {
 // GetBool returns the bool value for a given key from the session data. The
 // zero value for a bool (false) is returned if the key does not exist or the
 // value could not be type asserted to a bool.
-func (s *Session) GetBool(ctx context.Context, key string) bool {
-	val := s.Get(ctx, key)
+func (s *Session) GetBool(c SessionContext, key string) bool {
+	val := s.Get(c, key)
 	b, ok := val.(bool)
 	if !ok {
 		return false
@@ -321,8 +347,8 @@ func (s *Session) GetBool(ctx context.Context, key string) bool {
 // GetInt returns the int value for a given key from the session data. The
 // zero value for an int (0) is returned if the key does not exist or the
 // value could not be type asserted to an int.
-func (s *Session) GetInt(ctx context.Context, key string) int {
-	val := s.Get(ctx, key)
+func (s *Session) GetInt(c SessionContext, key string) int {
+	val := s.Get(c, key)
 	i, ok := val.(int)
 	if !ok {
 		return 0
@@ -333,8 +359,8 @@ func (s *Session) GetInt(ctx context.Context, key string) int {
 // GetFloat returns the float64 value for a given key from the session data. The
 // zero value for an float64 (0) is returned if the key does not exist or the
 // value could not be type asserted to a float64.
-func (s *Session) GetFloat(ctx context.Context, key string) float64 {
-	val := s.Get(ctx, key)
+func (s *Session) GetFloat(c SessionContext, key string) float64 {
+	val := s.Get(c, key)
 	f, ok := val.(float64)
 	if !ok {
 		return 0
@@ -345,8 +371,8 @@ func (s *Session) GetFloat(ctx context.Context, key string) float64 {
 // GetBytes returns the byte slice ([]byte) value for a given key from the session
 // data. The zero value for a slice (nil) is returned if the key does not exist
 // or could not be type asserted to []byte.
-func (s *Session) GetBytes(ctx context.Context, key string) []byte {
-	val := s.Get(ctx, key)
+func (s *Session) GetBytes(c SessionContext, key string) []byte {
+	val := s.Get(c, key)
 	b, ok := val.([]byte)
 	if !ok {
 		return nil
@@ -358,8 +384,8 @@ func (s *Session) GetBytes(ctx context.Context, key string) []byte {
 // zero value for a time.Time object is returned if the key does not exist or the
 // value could not be type asserted to a time.Time. This can be tested with the
 // time.IsZero() method.
-func (s *Session) GetTime(ctx context.Context, key string) time.Time {
-	val := s.Get(ctx, key)
+func (s *Session) GetTime(c SessionContext, key string) time.Time {
+	val := s.Get(c, key)
 	t, ok := val.(time.Time)
 	if !ok {
 		return time.Time{}
@@ -371,8 +397,8 @@ func (s *Session) GetTime(ctx context.Context, key string) time.Time {
 // session data. The session data status will be set to Modified. The zero
 // value for a string ("") is returned if the key does not exist or the value
 // could not be type asserted to a string.
-func (s *Session) PopString(ctx context.Context, key string) string {
-	val := s.Pop(ctx, key)
+func (s *Session) PopString(c SessionContext, key string) string {
+	val := s.Pop(c, key)
 	str, ok := val.(string)
 	if !ok {
 		return ""
@@ -384,8 +410,8 @@ func (s *Session) PopString(ctx context.Context, key string) string {
 // session data. The session data status will be set to Modified. The zero
 // value for a bool (false) is returned if the key does not exist or the value
 // could not be type asserted to a bool.
-func (s *Session) PopBool(ctx context.Context, key string) bool {
-	val := s.Pop(ctx, key)
+func (s *Session) PopBool(c SessionContext, key string) bool {
+	val := s.Pop(c, key)
 	b, ok := val.(bool)
 	if !ok {
 		return false
@@ -397,8 +423,8 @@ func (s *Session) PopBool(ctx context.Context, key string) bool {
 // session data. The session data status will be set to Modified. The zero
 // value for an int (0) is returned if the key does not exist or the value could
 // not be type asserted to an int.
-func (s *Session) PopInt(ctx context.Context, key string) int {
-	val := s.Pop(ctx, key)
+func (s *Session) PopInt(c SessionContext, key string) int {
+	val := s.Pop(c, key)
 	i, ok := val.(int)
 	if !ok {
 		return 0
@@ -410,8 +436,8 @@ func (s *Session) PopInt(ctx context.Context, key string) int {
 // session data. The session data status will be set to Modified. The zero
 // value for an float64 (0) is returned if the key does not exist or the value
 // could not be type asserted to a float64.
-func (s *Session) PopFloat(ctx context.Context, key string) float64 {
-	val := s.Pop(ctx, key)
+func (s *Session) PopFloat(c SessionContext, key string) float64 {
+	val := s.Pop(c, key)
 	f, ok := val.(float64)
 	if !ok {
 		return 0
@@ -423,8 +449,8 @@ func (s *Session) PopFloat(ctx context.Context, key string) float64 {
 // deletes it from the from the session data. The session data status will be
 // set to Modified. The zero value for a slice (nil) is returned if the key does
 // not exist or could not be type asserted to []byte.
-func (s *Session) PopBytes(ctx context.Context, key string) []byte {
-	val := s.Pop(ctx, key)
+func (s *Session) PopBytes(c SessionContext, key string) []byte {
+	val := s.Pop(c, key)
 	b, ok := val.([]byte)
 	if !ok {
 		return nil
@@ -436,8 +462,8 @@ func (s *Session) PopBytes(ctx context.Context, key string) []byte {
 // the session data. The session data status will be set to Modified. The zero
 // value for a time.Time object is returned if the key does not exist or the
 // value could not be type asserted to a time.Time.
-func (s *Session) PopTime(ctx context.Context, key string) time.Time {
-	val := s.Pop(ctx, key)
+func (s *Session) PopTime(c SessionContext, key string) time.Time {
+	val := s.Pop(c, key)
 	t, ok := val.(time.Time)
 	if !ok {
 		return time.Time{}
@@ -445,16 +471,25 @@ func (s *Session) PopTime(ctx context.Context, key string) time.Time {
 	return t
 }
 
-func (s *Session) addSessionDataToContext(ctx context.Context, sd *sessionData) context.Context {
-	return context.WithValue(ctx, s.contextKey, sd)
+// Token retrieves the current token or an empty string.
+//
+// This is used when unit testing and overriding LoadFromMiddleware
+// or SaveFromMiddleware.
+func (s *Session) Token(c SessionContext) string {
+	sd := s.getSessionDataFromContext(c)
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	return sd.token
 }
 
-func (s *Session) getSessionDataFromContext(ctx context.Context) *sessionData {
-	c, ok := ctx.Value(s.contextKey).(*sessionData)
+func (s *Session) getSessionDataFromContext(c SessionContext) *sessionData {
+	sd, ok := c.Get(string(s.contextKey)).(*sessionData)
 	if !ok {
 		panic("scs: no session data in context")
 	}
-	return c
+	return sd
 }
 
 func (sd *sessionData) encode() ([]byte, error) {

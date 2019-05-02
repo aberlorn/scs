@@ -1,3 +1,14 @@
+# SCS - The Echo-Enabled Version
+
+The [aberlorn/scs](https://github.com/aberlorn/scs) fork of [alexedwards/scs](https://github.com/alexedwards/scs) is built for [Echo](https://echo.labstack.com/).
+
+* See the [README](https://github.com/aberlorn/scs/tree/master/middleware/README.md) under [middleware](https://github.com/aberlorn/scs/tree/master/middleware)
+* [Example](https://github.com/aberlorn/scs/tree/master/middleware/README.md) 
+
+As appropriate we will keep this fork current with `scs`. 
+
+Unfortunately forked versions cannot post issues. 
+
 # SCS: HTTP Session Management for Go
 
 * [Installation](#installation)
