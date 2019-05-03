@@ -23,7 +23,7 @@ Some advice for getting support
 
 Below is a starter application using in-memory storage via `memstore`. For persistence across application restarts, use persistent storage (eg `redis`).
 
-This example overrides the `LoadFromMiddleware` function to enforce token creation by default. Privacy regimes (eg [GDPR](https://eugdpr.org/)) limit client-side cookies until the user opts-in or satisfies some other legitimate purpose. Reference the rules for your jurisdiction of service. The default `LoadFromMiddleware` does not force token creation. 
+This example overrides the `LoadCheck` function to enforce token creation by default. Privacy regimes (eg [GDPR](https://eugdpr.org/)) limit client-side cookies until the user opts-in or satisfies some other legitimate purpose. Reference the rules for your jurisdiction of service. The default `LoadCheck` does not force token creation. 
 
 
 ```golang
@@ -42,7 +42,7 @@ type MyEchoSessionSCS struct {
 	*EchoSessionSCS
 }
 
-func (s *MyEchoSessionSCS) LoadFromMiddleware(c scs.SessionContext) error {
+func (s *MyEchoSessionSCS) LoadCheck(c scs.SessionContext) error {
 	var token string
 	cookie, err := c.Cookie(s.Cookie.Name)
 	if err == nil {
@@ -51,7 +51,7 @@ func (s *MyEchoSessionSCS) LoadFromMiddleware(c scs.SessionContext) error {
 
 	sd, err := s.Load(c, token)
 	if err != nil {
-		return fmt.Errorf("func s.Load failed in MyEchoSession.LoadFromMiddleware; %v", err)
+		return fmt.Errorf("func s.Load failed in MyEchoSession.LoadCheck; %v", err)
 	}
 
 	// Always require a token.
@@ -126,7 +126,7 @@ func handleLogin(session *MyEchoSessionSCS) echo.HandlerFunc {
 		user = "Ipso Facto"
 		session.Put(c, "user", user)
 
-		if err := session.SaveFromMiddleware(c); err != nil {
+		if err := session.SaveCheck(c); err != nil {
 			return c.String(http.StatusInternalServerError, fmt.Sprintf("handleLogin save session error=%v\n", err))
 		}
 
@@ -151,7 +151,7 @@ func handleLogout(session *MyEchoSessionSCS) echo.HandlerFunc {
 		// Then make the privilege-level change.
 		session.Put(c, "user", "")
 
-		if err := session.SaveFromMiddleware(c); err != nil {
+		if err := session.SaveCheck(c); err != nil {
 			return c.String(http.StatusInternalServerError, fmt.Sprintf("handleLogout save session error=%v\n", err))
 		}
 
