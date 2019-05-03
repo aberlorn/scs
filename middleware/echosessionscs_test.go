@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/gob"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -281,6 +282,109 @@ func TestDualSessionsLoadFromMiddlewareOverride(t *testing.T) {
 
 	SessionCache().Remove("session1")
 	SessionCache().Remove("session2")
+
+	if SessionCache().Length() != 0 {
+		t.Fatalf("post-test session cache should be 0 but it is %d", SessionCache().Length())
+	}
+}
+
+type MyObject struct {
+	AString string
+	AInt int
+}
+
+func sessionFromContext(c echo.Context) *MyObject {
+	obj, ok := c.Get("obj").(MyObject)
+	if !ok {
+		return nil
+	}
+	return &obj
+}
+
+func TestLoadFromMiddlewareObject(t *testing.T) {
+	if SessionCache().Length() != 0 {
+		t.Fatalf("pre-test session cache should be 0 but it is %d", SessionCache().Length())
+	}
+
+	// ----------------------------------------------------------
+	// register with gob
+	// required by PutObject
+	// see https://github.com/alexedwards/scs/blob/876a0fdbdd8ce6c328b2e8064a7483ff377ddaa4/session.go#L535
+	gob.Register(MyObject{})
+
+	// ----------------------------------------------------------
+	// init echo
+	e := echo.New()
+
+	req := httptest.NewRequest(echo.GET, "/", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	// ----------------------------------------------------------
+	// Session - Overriding LoadFromMiddleware
+	scMyEchoSession := &SessionsConfig{
+		Session: &MyEchoSession{EchoSessionSCS: &EchoSessionSCS{Session: scs.NewSession()}},
+		DoCache: true,
+	}
+
+	var tokenid string
+	mw := SessionsWithConfig(scMyEchoSession)
+	h := mw(func(c echo.Context) error {
+		session := SessionCache().Get(scMyEchoSession.Session.GetSession().Cookie.Name)
+		tokenid = session.Session.GetSession().Token(c)
+
+		obj := session.Session.GetSession().Get(c, "obj")
+		if obj == nil {
+			obj = &MyObject{AString: "mystring", AInt: 100}
+			session.Session.GetSession().Put(c, "obj", obj)
+			if err := session.Session.GetSession().SaveFromMiddleware(c); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		// cache "us" inside echo
+		c.Set("obj", obj)
+
+		return c.String(http.StatusOK, tokenid)
+	})
+	assert.NoError(t, h(c))
+	assert.Contains(t, rec.Header().Get(echo.HeaderSetCookie), scMyEchoSession.Session.GetSession().Cookie.Name)
+	assert.Contains(t, rec.Header().Get(echo.HeaderSetCookie), tokenid)
+	assert.Contains(t, rec.Body.String(), tokenid)
+
+	// ----------------------------------------------------------
+	// Handler2
+	req = httptest.NewRequest(echo.GET, "/", nil)
+	req.Header.Add("Cookie", fmt.Sprintf("session=%s", tokenid))
+	rec = httptest.NewRecorder()
+	c = e.NewContext(req, rec)
+	var tokenid2 string
+	h = mw(func(c echo.Context) error {
+		session := SessionCache().Get(scMyEchoSession.Session.GetSession().Cookie.Name)
+		tokenid2 = session.Session.GetSession().Token(c)
+
+		if tokenid != tokenid2 {
+			t.Fatalf("tokens do not match; tokenid=%s   tokenid2=%s", tokenid, tokenid2)
+		}
+
+		obj, _ := session.Session.GetSession().Get(c, "obj").(MyObject)
+
+		// cache "us" inside echo
+		c.Set("obj", obj)
+
+		return c.String(http.StatusOK, fmt.Sprintf("%s | %d", obj.AString, obj.AInt))
+	})
+	assert.NoError(t, h(c))
+	assert.Contains(t, rec.Body.String(), "mystring | 100")
+
+	obj := sessionFromContext(c)
+	assert.Contains(t, "mystring | 100", fmt.Sprintf("%s | %d", obj.AString, obj.AInt))
+
+	if SessionCache().Length() != 1 {
+		t.Fatalf("session cache should be 1 but it is %d", SessionCache().Length())
+	}
+
+	SessionCache().Remove("session")
 
 	if SessionCache().Length() != 0 {
 		t.Fatalf("post-test session cache should be 0 but it is %d", SessionCache().Length())
