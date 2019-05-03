@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"encoding/gob"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -294,11 +293,15 @@ type MyObject struct {
 }
 
 func sessionFromContext(c echo.Context) *MyObject {
-	obj, ok := c.Get("obj").(MyObject)
+	obj, ok := c.Get("obj").(*MyObject)
 	if !ok {
-		return nil
+		obj, ok := c.Get("obj").(MyObject)
+		if !ok {
+			return nil
+		}
+		return &obj
 	}
-	return &obj
+	return obj
 }
 
 func TestLoadFromMiddlewareObject(t *testing.T) {
@@ -310,7 +313,7 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 	// register with gob
 	// required by PutObject
 	// see https://github.com/alexedwards/scs/blob/876a0fdbdd8ce6c328b2e8064a7483ff377ddaa4/session.go#L535
-	gob.Register(MyObject{})
+	// gob.Register(MyObject{})
 
 	// ----------------------------------------------------------
 	// init echo
@@ -323,7 +326,7 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 	// ----------------------------------------------------------
 	// Session - Overriding LoadFromMiddleware
 	scMyEchoSession := &SessionsConfig{
-		Session: &MyEchoSession{EchoSessionSCS: &EchoSessionSCS{Session: scs.NewSession()}},
+		Session: &MyEchoSession{EchoSessionSCS: &EchoSessionSCS{Session: scs.NewSession(), GOBInterfaces: []interface{}{MyObject{}}}},
 		DoCache: true,
 	}
 
@@ -333,17 +336,16 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 		session := SessionCache().Get(scMyEchoSession.Session.GetSession().Cookie.Name)
 		tokenid = session.Session.GetSession().Token(c)
 
-		obj := session.Session.GetSession().Get(c, "obj")
-		if obj == nil {
-			obj = &MyObject{AString: "mystring", AInt: 100}
+		obj, ok := session.Session.GetSession().Get(c, "obj").(MyObject)
+		if !ok {
+			obj = MyObject{AString: "mystring", AInt: 100}
 			session.Session.GetSession().Put(c, "obj", obj)
 			if err := session.Session.GetSession().SaveFromMiddleware(c); err != nil {
 				t.Fatal(err)
 			}
 		}
 
-		// cache "us" inside echo
-		c.Set("obj", obj)
+		c.Set("obj", &obj)
 
 		return c.String(http.StatusOK, tokenid)
 	})
@@ -370,7 +372,7 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 		obj, _ := session.Session.GetSession().Get(c, "obj").(MyObject)
 
 		// cache "us" inside echo
-		c.Set("obj", obj)
+		c.Set("obj", &obj)
 
 		return c.String(http.StatusOK, fmt.Sprintf("%s | %d", obj.AString, obj.AInt))
 	})

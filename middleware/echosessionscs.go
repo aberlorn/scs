@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"encoding/gob"
 	"fmt"
 	"time"
 
@@ -21,15 +22,27 @@ type EchoSessionSCS struct {
 
 	IdleTimeoutMinutes int    `json:"idleTimeoutMinutes"`
 	LifetimeMinutes    int    `json:"lifetimeMinutes"`
+
+	GOBInterfaces []interface{}
 }
 
 func (s *EchoSessionSCS) GetSession() *EchoSessionSCS {
 	return s
 }
 
+// Initialize translates minute values for IdleTimout and Lifetime
+// to Duration. Gobs are registered which is required for scs
+// session encoding.
 func (s *EchoSessionSCS) Initialize() error {
 	s.Session.Lifetime = s.GetLifetime()
 	s.IdleTimeout = s.GetIdleTimeout()
+
+	for _, i := range s.GOBInterfaces {
+		if i != nil {
+			gob.Register(i)
+		}
+	}
+
 	return nil
 }
 
