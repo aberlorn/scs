@@ -16,7 +16,7 @@ type MyEchoSession struct {
 	*EchoSessionSCS
 }
 
-func (s *MyEchoSession) LoadFromMiddleware(c scs.SessionContext) error {
+func (s *MyEchoSession) LoadCheck(c scs.SessionContext) error {
 	var token string
 	cookie, err := c.Cookie(s.Cookie.Name)
 	if err == nil {
@@ -25,7 +25,7 @@ func (s *MyEchoSession) LoadFromMiddleware(c scs.SessionContext) error {
 
 	sd, err := s.Load(c, token)
 	if err != nil {
-		return fmt.Errorf("func s.Load failed in MyEchoSession.LoadFromMiddleware; %v", err)
+		return fmt.Errorf("func s.Load failed in MyEchoSession.LoadCheck; %v", err)
 	}
 
 	// Always require a token.
@@ -37,7 +37,7 @@ func (s *MyEchoSession) LoadFromMiddleware(c scs.SessionContext) error {
 	return nil
 }
 
-func (s *MyEchoSession) SaveFromMiddleware(c scs.SessionContext) error {
+func (s *MyEchoSession) SaveCheck(c scs.SessionContext) error {
 	switch s.Status(c) {
 	case scs.Modified:
 		token, expiry, err := s.Commit(c)
@@ -147,7 +147,7 @@ func TestMiddlewareDefault(t *testing.T) {
 		message = "Ipso Facto"
 		session.Session.GetSession().Put(c, "message", message)
 
-		if err := session.Session.GetSession().SaveFromMiddleware(c); err != nil {
+		if err := session.Session.GetSession().SaveCheck(c); err != nil {
 			return fmt.Errorf("cannot save session; %v", err)
 		}
 
@@ -168,7 +168,7 @@ func TestMiddlewareDefault(t *testing.T) {
 	}
 }
 
-func TestLoadFromMiddlewareOverride(t *testing.T) {
+func TestLoadCheckOverride(t *testing.T) {
 	if SessionCache().Length() != 0 {
 		t.Fatalf("pre-test session cache should be 0 but it is %d", SessionCache().Length())
 	}
@@ -182,7 +182,7 @@ func TestLoadFromMiddlewareOverride(t *testing.T) {
 	c := e.NewContext(req, rec)
 
 	// ----------------------------------------------------------
-	// Session - Overriding LoadFromMiddleware
+	// Session - Overriding LoadCheck
 	scMyEchoSession := &SessionsConfig{
 		Session: &MyEchoSession{EchoSessionSCS: &EchoSessionSCS{Session: scs.NewSession()}},
 		DoCache: true,
@@ -211,7 +211,7 @@ func TestLoadFromMiddlewareOverride(t *testing.T) {
 	}
 }
 
-func TestDualSessionsLoadFromMiddlewareOverride(t *testing.T) {
+func TestDualSessionsLoadCheckOverride(t *testing.T) {
 	if SessionCache().Length() != 0 {
 		t.Fatalf("pre-test session cache should be 0 but it is %d", SessionCache().Length())
 	}
@@ -304,7 +304,7 @@ func sessionFromContext(c echo.Context) *MyObject {
 	return obj
 }
 
-func TestLoadFromMiddlewareObject(t *testing.T) {
+func TestLoadCheckObject(t *testing.T) {
 	if SessionCache().Length() != 0 {
 		t.Fatalf("pre-test session cache should be 0 but it is %d", SessionCache().Length())
 	}
@@ -324,7 +324,7 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 	c := e.NewContext(req, rec)
 
 	// ----------------------------------------------------------
-	// Session - Overriding LoadFromMiddleware
+	// Session - Overriding LoadCheck
 	scMyEchoSession := &SessionsConfig{
 		Session: &MyEchoSession{EchoSessionSCS: &EchoSessionSCS{Session: scs.NewSession(), GOBInterfaces: []interface{}{MyObject{}}}},
 		DoCache: true,
@@ -340,7 +340,7 @@ func TestLoadFromMiddlewareObject(t *testing.T) {
 		if !ok {
 			obj = MyObject{AString: "mystring", AInt: 100}
 			session.Session.GetSession().Put(c, "obj", obj)
-			if err := session.Session.GetSession().SaveFromMiddleware(c); err != nil {
+			if err := session.Session.GetSession().SaveCheck(c); err != nil {
 				t.Fatal(err)
 			}
 		}

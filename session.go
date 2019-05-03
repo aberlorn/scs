@@ -95,10 +95,11 @@ func NewSession() *Session {
 	return s
 }
 
-// LoadFromMiddleware provides middleware which automatically loads session
-// data for the current `echo` request from the client cookie.
+// LoadCheck automatically loads session data for the current `echo` request
+// from the client cookie. Call this within middleware or your handlers to
+// initialize a new session.
 // Override this function to implement non-cookie sessions (eg "X-SESSION")
-func (s *Session) LoadFromMiddleware(c SessionContext) error {
+func (s *Session) LoadCheck(c SessionContext) error {
 	var token string
 	cookie, err := c.Cookie(s.Cookie.Name)
 	if err == nil {
@@ -119,11 +120,14 @@ func (s *Session) LoadFromMiddleware(c SessionContext) error {
 	return nil
 }
 
-// SaveFromMiddleware provides middleware which saves session
-// data for the current `echo` request and communicates the session token to
-// the client in a cookie.
+// SaveCheck automatically saves the current echo-scs session if the session state
+// is Status or Destroyed  and communicates the session token to
+// the client in a cookie. Call this function after putting data in order to
+// save the session in storage. Place in middleware and call it prior to
+// specialized echo functions that may commit header changes before SaveCheck
+// writes to the header.
 // Override this function to implement non-cookie sessions (eg "X-SESSION")
-func (s *Session) SaveFromMiddleware(c SessionContext) error {
+func (s *Session) SaveCheck(c SessionContext) error {
 	switch s.Status(c) {
 	case Modified:
 		token, expiry, err := s.Commit(c)

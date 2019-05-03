@@ -13,8 +13,8 @@ import (
 type IEchoSessionSCS interface {
 	GetSession() *EchoSessionSCS
 	Initialize() error
-	LoadFromMiddleware(c scs.SessionContext) error
-	SaveFromMiddleware(c scs.SessionContext) error
+	LoadCheck(c scs.SessionContext) error
+	SaveCheck(c scs.SessionContext) error
 }
 
 type EchoSessionSCS struct {
@@ -115,13 +115,13 @@ func SessionsWithConfig(config *SessionsConfig) echo.MiddlewareFunc {
 				return next(c)
 			}
 
-			if err := config.Session.LoadFromMiddleware(c); err != nil {
+			if err := config.Session.LoadCheck(c); err != nil {
 				return fmt.Errorf("could not load the session in SessionsWithConfig; %v", err)
 			}
 
 			// If a token has not been created, be certain to save it and write headers.
 			// This code only saves to the DB on `Modified` or `Destroyed` or when token == "".
-			if err := config.Session.SaveFromMiddleware(c); err != nil {
+			if err := config.Session.SaveCheck(c); err != nil {
 				return fmt.Errorf("could not save the session in SessionsWithConfig; %v", err)
 			}
 
